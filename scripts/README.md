@@ -6,3 +6,4 @@ Phylogenetic analyses with PGLS Structure
 scripts/01_01_compute_deltas/: Habitat delta calculations
 scripts/02_habitat_model_selection/: Model fitting and selection
 scripts/03_phylogenetic_models/: Phylogenetic models
+Some directory and file names are in Portuguese.
