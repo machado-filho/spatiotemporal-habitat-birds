@@ -1,0 +1,87 @@
+// This script calculates the amount of forest within each point for all buffer sizes 
+// and for each year in the MapBiomas time series.
+
+// Adjust the coordinate columns (fix if they are swapped)
+points = points.map(function(feature) {
+  var longitude = feature.get('Longitude_x'); // Longitude
+  var latitude = feature.get('Latitude_y');   // Latitude
+  var correctedPoint = ee.Geometry.Point([longitude, latitude]);
+  return feature.setGeometry(correctedPoint); // Set the point with corrected coordinates
+});
+
+// Load the MapBiomas image collection
+var mapbiomas = ee.Image('projects/mapbiomas-public/assets/brazil/lulc/collection9/mapbiomas_collection90_integration_v1');
+
+// Define the buffer range
+var bufferSizes = ee.List.sequence(200, 20000, 200); // Buffers from 200 to 20,000 meters, every 200 meters
+
+// Define the Forest class (MapBiomas, class 3)
+var forestClass = 3;
+
+// Function to calculate the percentage of forest within each buffer for each year
+var calculateForestPercentage = function(point) {
+  var geom = point.geometry();
+  var longitude = geom.coordinates().get(0); // Longitude
+  var latitude = geom.coordinates().get(1);  // Latitude
+
+  // Create buffers around each point
+  var buffers = bufferSizes.map(function(size) {
+    var buffer = geom.buffer(ee.Number(size));
+    return ee.Feature(buffer, {
+      'buffer_size': size,
+      'longitude': longitude,
+      'latitude': latitude
+    });
+  });
+
+  var bufferedCollection = ee.FeatureCollection(buffers);
+
+  // Map the years available in the MapBiomas collection (1985 to 2023)
+  var years = ee.List.sequence(1985, 2023);
+  
+  var results = years.map(function(year) {
+    // Ensure the year is a string without decimal points
+    var bandName = ee.String('classification_').cat(ee.Number(year).format('%.0f'));
+    
+    // Select the current year
+    var yearImage = mapbiomas.select(bandName);
+    
+    // Filter the Forest class
+    var forestMask = yearImage.eq(forestClass);
+    
+    // Calculate the percentage of forest within each buffer
+    var percentages = bufferedCollection.map(function(buffer) {
+      // Calculate the total buffer area
+      var totalArea = ee.Number(buffer.geometry().area()); // Area in square meters
+      
+      // Calculate the forest area
+      var forestArea = forestMask.multiply(ee.Image.pixelArea())
+                                   .reduceRegion({
+                                     reducer: ee.Reducer.sum(),
+                                     geometry: buffer.geometry(),
+                                     scale: 30,
+                                     maxPixels: 1e13
+                                   }).get(bandName);
+      
+      // Calculate forest percentage
+      var forestPercentage = ee.Number(forestArea).divide(totalArea).multiply(100);
+      
+      return buffer.set('year', year)
+                   .set('forest_percentage', forestPercentage); // Forest percentage
+    });
+    
+    return percentages;
+  });
+
+  return ee.FeatureCollection(results).flatten();
+};
+
+// Apply the function to all points
+var results = points.map(calculateForestPercentage).flatten();
+
+// Export the result table, excluding the `.geo` column
+Export.table.toDrive({
+  collection: results.select(['buffer_size', 'forest_percentage', 'year', 'longitude', 'latitude']),
+  description: 'ForestPercentageBuffers',
+  fileFormat: 'CSV'
+});
